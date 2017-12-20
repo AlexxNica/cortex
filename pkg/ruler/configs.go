@@ -34,7 +34,7 @@ func (cfg *ConfigStoreConfig) RegisterFlags(f *flag.FlagSet) {
 // RulesAPI is what the ruler needs from a config store to process rules.
 type RulesAPI interface {
 	// GetConfigs returns all Cortex configurations from a configs API server
-	// // TODO: hat have been updated after the given configs.ID was last updated.
+	// that have been updated after the given configs.ID was last updated.
 	GetConfigs(since configs.ID) (map[string]configs.VersionedRulesConfig, error)
 }
 
