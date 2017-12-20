@@ -24,12 +24,12 @@ func (cfg *Config) RegisterFlags(f *flag.FlagSet) {
 
 // RulesDB has ruler-specific DB interfaces.
 type RulesDB interface {
-	// GetRulesConfig gets the user's alertmanager config
+	// GetRulesConfig gets the user's ruler config
 	GetRulesConfig(userID string) (configs.VersionedRulesConfig, error)
-	// SetRulesConfig sets the user's alertmanager config
-	SetRulesConfig(userID string, config configs.RulesConfig) error
+	// SetRulesConfig sets the user's ruler config
+	SetRulesConfig(userID string, oldConfig, newConfig configs.RulesConfig) (bool, error)
 
-	// GetAllRulesConfigs gets all of the alertmanager configs
+	// GetAllRulesConfigs gets all of the ruler configs
 	GetAllRulesConfigs() (map[string]configs.VersionedRulesConfig, error)
 	// GetRulesConfigs gets all of the configs that have been added or have
 	// changed since the provided config.
