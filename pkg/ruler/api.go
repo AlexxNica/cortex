@@ -66,7 +66,6 @@ func (a *API) getConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "No configuration", http.StatusNotFound)
 		return
 	} else if err != nil {
-		// XXX: Untested
 		level.Error(logger).Log("msg", "error getting config", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -74,7 +73,6 @@ func (a *API) getConfig(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(cfg); err != nil {
-		// XXX: Untested
 		level.Error(logger).Log("msg", "error encoding config", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -91,7 +89,6 @@ func (a *API) setConfig(w http.ResponseWriter, r *http.Request) {
 
 	var cfg configs.RulesConfig
 	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
-		// XXX: Untested
 		level.Error(logger).Log("msg", "error decoding json body", "err", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -102,7 +99,6 @@ func (a *API) setConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.db.SetRulesConfig(userID, cfg); err != nil {
-		// XXX: Untested
 		level.Error(logger).Log("msg", "error storing config", "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
