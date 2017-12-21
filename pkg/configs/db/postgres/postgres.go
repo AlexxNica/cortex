@@ -169,11 +169,11 @@ func (d DB) SetRulesConfig(userID string, oldConfig, newConfig configs.RulesConf
 }
 
 func (d DB) findRulesConfigs(filter squirrel.Sqlizer) (map[string]configs.VersionedRulesConfig, error) {
-	rows, err := d.Select("id", "owner_id", "config ->> 'alertmanager_config'").
+	rows, err := d.Select("id", "owner_id", "config ->> 'rules_files'").
 		Options("DISTINCT ON (owner_id)").
 		From("configs").
 		Where(filter).
-		Where("config @> 'alertmanager_config' AND config ->> 'alertmanager_config' <> ''").
+		Where("config ->> 'rules_files' <> '{}'").
 		OrderBy("owner_id, id DESC").
 		Query()
 	if err != nil {
@@ -184,7 +184,12 @@ func (d DB) findRulesConfigs(filter squirrel.Sqlizer) (map[string]configs.Versio
 	for rows.Next() {
 		var cfg configs.VersionedRulesConfig
 		var userID string
-		err = rows.Scan(&cfg.ID, &userID, &cfg.Config)
+		var cfgBytes []byte
+		err = rows.Scan(&cfg.ID, &userID, &cfgBytes)
+		if err != nil {
+			return nil, err
+		}
+		err = json.Unmarshal(cfgBytes, &cfg.Config)
 		if err != nil {
 			return nil, err
 		}

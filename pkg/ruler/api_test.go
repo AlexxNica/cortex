@@ -23,9 +23,10 @@ const (
 )
 
 var (
-	app      *API
-	database db.DB
-	counter  int
+	app        *API
+	database   db.DB
+	counter    int
+	privateAPI RulesAPI
 )
 
 // setup sets up the environment for the tests.
@@ -33,6 +34,7 @@ func setup(t *testing.T) {
 	database = dbtest.Setup(t)
 	app = NewAPI(database)
 	counter = 0
+	privateAPI = dbStore{db: database}
 }
 
 // cleanup cleans up the environment after a test.
@@ -178,74 +180,62 @@ func Test_PostConfig_MultipleUsers(t *testing.T) {
 	assert.True(t, config2.ID > config1.ID, "%v > %v", config2.ID, config1.ID)
 }
 
-// // GetAllConfigs returns an empty list of configs if there aren't any.
-// func Test_GetAllConfigs_Empty(t *testing.T) {
-// 	setup(t)
-// 	defer cleanup(t)
+// GetAllConfigs returns an empty list of configs if there aren't any.
+func Test_GetAllConfigs_Empty(t *testing.T) {
+	setup(t)
+	defer cleanup(t)
 
-// 	w := request(t, "GET", c.PrivateEndpoint, nil)
-// 	assert.Equal(t, http.StatusOK, w.Code)
-// 	var found api.ConfigsView
-// 	err := json.Unmarshal(w.Body.Bytes(), &found)
-// 	assert.NoError(t, err, "Could not unmarshal JSON")
-// 	assert.Equal(t, api.ConfigsView{Configs: map[string]configs.View{}}, found)
-// }
+	configs, err := privateAPI.GetConfigs(0)
+	assert.NoError(t, err, "error getting configs")
+	assert.Equal(t, 0, len(configs))
+}
 
-// // GetAllConfigs returns all created configs.
-// func Test_GetAllConfigs(t *testing.T) {
-// 	setup(t)
-// 	defer cleanup(t)
+// GetAllConfigs returns all created configs.
+func Test_GetAllConfigs(t *testing.T) {
+	setup(t)
+	defer cleanup(t)
 
-// 	userID := makeUserID()
-// 	config := makeRulerConfig()
+	userID := makeUserID()
+	config := makeRulerConfig()
+	view := post(t, userID, nil, config)
 
-// 	view := c.post(t, userID, config)
-// 	w := request(t, "GET", c.PrivateEndpoint, nil)
-// 	assert.Equal(t, http.StatusOK, w.Code)
-// 	var found api.ConfigsView
-// 	err := json.Unmarshal(w.Body.Bytes(), &found)
-// 	assert.NoError(t, err, "Could not unmarshal JSON")
-// 	assert.Equal(t, api.ConfigsView{Configs: map[string]configs.View{
-// 		userID: view,
-// 	}}, found)
-// }
+	found, err := privateAPI.GetConfigs(0)
+	assert.NoError(t, err, "error getting configs")
+	assert.Equal(t, map[string]configs.VersionedRulesConfig{
+		userID: view,
+	}, found)
+}
 
-// // GetAllConfigs returns the *newest* versions of all created configs.
-// func Test_GetAllConfigs_Newest(t *testing.T) {
-// 	setup(t)
-// 	defer cleanup(t)
+// GetAllConfigs returns the *newest* versions of all created configs.
+func Test_GetAllConfigs_Newest(t *testing.T) {
+	setup(t)
+	defer cleanup(t)
 
-// 	userID := makeUserID()
+	userID := makeUserID()
 
-// 	c.post(t, userID, makeRulerConfig())
-// 	c.post(t, userID, makeRulerConfig())
-// 	lastCreated := c.post(t, userID, makeRulerConfig())
+	config1 := post(t, userID, nil, makeRulerConfig())
+	config2 := post(t, userID, config1.Config, makeRulerConfig())
+	lastCreated := post(t, userID, config2.Config, makeRulerConfig())
 
-// 	w := request(t, "GET", c.PrivateEndpoint, nil)
-// 	assert.Equal(t, http.StatusOK, w.Code)
-// 	var found api.ConfigsView
-// 	err := json.Unmarshal(w.Body.Bytes(), &found)
-// 	assert.NoError(t, err, "Could not unmarshal JSON")
-// 	assert.Equal(t, api.ConfigsView{Configs: map[string]configs.View{
-// 		userID: lastCreated,
-// 	}}, found)
-// }
+	found, err := privateAPI.GetConfigs(0)
+	assert.NoError(t, err, "error getting configs")
+	assert.Equal(t, map[string]configs.VersionedRulesConfig{
+		userID: lastCreated,
+	}, found)
+}
 
-// func Test_GetConfigs_IncludesNewerConfigsAndExcludesOlder(t *testing.T) {
-// 	setup(t)
-// 	defer cleanup(t)
+func Test_GetConfigs_IncludesNewerConfigsAndExcludesOlder(t *testing.T) {
+	setup(t)
+	defer cleanup(t)
 
-// 	c.post(t, makeUserID(), makeRulerConfig())
-// 	config2 := c.post(t, makeUserID(), makeRulerConfig())
-// 	userID3 := makeUserID()
-// 	config3 := c.post(t, userID3, makeRulerConfig())
+	post(t, makeUserID(), nil, makeRulerConfig())
+	config2 := post(t, makeUserID(), nil, makeRulerConfig())
+	userID3 := makeUserID()
+	config3 := post(t, userID3, nil, makeRulerConfig())
 
-// 	w := request(t, "GET", fmt.Sprintf("%s?since=%d", c.PrivateEndpoint, config2.ID), nil)
-// 	assert.Equal(t, http.StatusOK, w.Code)
-// 	var found api.ConfigsView
-// 	err := json.Unmarshal(w.Body.Bytes(), &found)
-// 	assert.NoError(t, err, "Could not unmarshal JSON")
-// 	assert.Equal(t, api.ConfigsView{Configs: map[string]configs.View{
-// 		userID3: config3,
-// 	}}, found)
-// }
+	found, err := privateAPI.GetConfigs(config2.ID)
+	assert.NoError(t, err, "error getting configs")
+	assert.Equal(t, map[string]configs.VersionedRulesConfig{
+		userID3: config3,
+	}, found)
+}
