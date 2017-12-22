@@ -3,13 +3,15 @@ package postgres
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
+	"time"
 
 	"github.com/Masterminds/squirrel"
 	"github.com/go-kit/kit/log/level"
 	_ "github.com/lib/pq"                         // Import the postgres sql driver
 	_ "github.com/mattes/migrate/driver/postgres" // Import the postgres migrations driver
 	"github.com/mattes/migrate/migrate"
+	"github.com/pkg/errors"
+	"github.com/prometheus/common/log"
 	"github.com/weaveworks/cortex/pkg/configs"
 	"github.com/weaveworks/cortex/pkg/util"
 )
@@ -19,6 +21,8 @@ const (
 	// schema so this isn't needed.
 	entityType = "org"
 	subsystem  = "cortex"
+	// timeout waiting for database connection to be established
+	dbTimeout = 5 * time.Minute
 )
 
 var (
@@ -42,8 +46,32 @@ type dbProxy interface {
 	Prepare(query string) (*sql.Stmt, error)
 }
 
+// dbWait waits for database connection to be established
+func dbWait(db *sql.DB) error {
+	deadline := time.Now().Add(dbTimeout)
+	var err error
+	for tries := 0; time.Now().Before(deadline); tries++ {
+		err = db.Ping()
+		if err == nil {
+			return nil
+		}
+		log.Warnf("db connection not established, error: %s; retrying...", err)
+		time.Sleep(time.Second << uint(tries))
+	}
+	return errors.Wrapf(err, "db connection not established after %s", dbTimeout)
+}
+
 // New creates a new postgres DB
 func New(uri, migrationsDir string) (DB, error) {
+	db, err := sql.Open("postgres", uri)
+	if err != nil {
+		return DB{}, errors.Wrap(err, "cannot open postgres db")
+	}
+
+	if err := dbWait(db); err != nil {
+		return DB{}, errors.Wrap(err, "cannot establish db connection")
+	}
+
 	if migrationsDir != "" {
 		level.Info(util.Logger).Log("msg", "running database migrations...")
 		if errs, ok := migrate.UpSync(uri, migrationsDir); !ok {
@@ -53,7 +81,7 @@ func New(uri, migrationsDir string) (DB, error) {
 			return DB{}, errors.New("database migrations failed")
 		}
 	}
-	db, err := sql.Open("postgres", uri)
+
 	return DB{
 		dbProxy:              db,
 		StatementBuilderType: statementBuilder(db),
@@ -132,6 +160,24 @@ func (d DB) GetConfigs(since configs.ID) (map[string]configs.View, error) {
 		activeConfig,
 		squirrel.Gt{"id": since},
 	})
+}
+
+// DeactivateConfig deactivates a configuration.
+func (d DB) DeactivateConfig(userID string) error {
+	_, err := d.Exec(
+		`update configs set deleted_at = $1 where owner_id = lower($2)`,
+		time.Now(), userID,
+	)
+	return err
+}
+
+// RestoreConfig restores deactivated configuration.
+func (d DB) RestoreConfig(userID string) error {
+	_, err := d.Exec(
+		`update configs set deleted_at = null where owner_id = lower($1)`,
+		userID,
+	)
+	return err
 }
 
 // Transaction runs the given function in a postgres transaction. If fn returns

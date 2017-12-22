@@ -30,6 +30,9 @@ type DB interface {
 	GetAllConfigs() (map[string]configs.View, error)
 	GetConfigs(since configs.ID) (map[string]configs.View, error)
 
+	DeactivateConfig(userID string) error
+	RestoreConfig(userID string) error
+
 	Close() error
 }
 

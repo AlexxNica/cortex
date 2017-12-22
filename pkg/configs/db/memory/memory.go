@@ -2,13 +2,15 @@ package memory
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/weaveworks/cortex/pkg/configs"
 )
 
 type config struct {
-	cfg configs.Config
-	id  configs.ID
+	cfg       configs.Config
+	id        configs.ID
+	deletedAt time.Time
 }
 
 func (c config) toView() configs.View {
@@ -32,10 +34,17 @@ func New(_, _ string) (*DB, error) {
 	}, nil
 }
 
+func isActive(c config) bool {
+	return c.deletedAt.IsZero()
+}
+
 // GetConfig gets the user's configuration.
 func (d *DB) GetConfig(userID string) (configs.View, error) {
 	c, ok := d.cfgs[userID]
 	if !ok {
+		return configs.View{}, sql.ErrNoRows
+	}
+	if !isActive(c) {
 		return configs.View{}, sql.ErrNoRows
 	}
 	return c.toView(), nil
@@ -52,7 +61,9 @@ func (d *DB) SetConfig(userID string, cfg configs.Config) error {
 func (d *DB) GetAllConfigs() (map[string]configs.View, error) {
 	cfgs := map[string]configs.View{}
 	for user, c := range d.cfgs {
-		cfgs[user] = c.toView()
+		if isActive(c) {
+			cfgs[user] = c.toView()
+		}
 	}
 	return cfgs, nil
 }
@@ -61,11 +72,31 @@ func (d *DB) GetAllConfigs() (map[string]configs.View, error) {
 func (d *DB) GetConfigs(since configs.ID) (map[string]configs.View, error) {
 	cfgs := map[string]configs.View{}
 	for user, c := range d.cfgs {
-		if c.id > since {
+		if c.id > since && isActive(c) {
 			cfgs[user] = c.toView()
 		}
 	}
 	return cfgs, nil
+}
+
+// DeactivateConfig deactivates configuration for a user.
+func (d *DB) DeactivateConfig(userID string) error {
+	cfg, ok := d.cfgs[userID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	cfg.deletedAt = time.Now()
+	return nil
+}
+
+// RestoreConfig restores deactivated configuration for a user.
+func (d *DB) RestoreConfig(userID string) error {
+	cfg, ok := d.cfgs[userID]
+	if !ok {
+		return sql.ErrNoRows
+	}
+	cfg.deletedAt = time.Time{}
+	return nil
 }
 
 // Close finishes using the db. Noop.

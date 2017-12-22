@@ -61,6 +61,8 @@ func (a *API) RegisterRoutes(r *mux.Router) {
 		{"get_alertmanager_config", "GET", "/api/prom/configs/alertmanager", a.getConfig},
 		{"set_alertmanager_config", "POST", "/api/prom/configs/alertmanager", a.setConfig},
 		{"validate_alertmanager_config", "POST", "/api/prom/configs/alertmanager/validate", a.validateAlertmanagerConfig},
+		{"deactivate_config", "DELETE", "/api/prom/configs/deactivate", a.deactivateConfig},
+		{"restore_config", "POST", "/api/prom/configs/restore", a.restoreConfig},
 		// Internal APIs.
 		{"private_get_rules", "GET", "/private/api/prom/configs/rules", a.getConfigs},
 		{"private_get_alertmanager_config", "GET", "/private/api/prom/configs/alertmanager", a.getConfigs},
@@ -216,4 +218,59 @@ func (a *API) getConfigs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+}
+
+func (a *API) deactivateConfig(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := user.ExtractOrgIDFromHTTPRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	logger := util.WithContext(r.Context(), util.Logger)
+
+	fmt.Printf("deactivateConfigs org ID %s\n", userID)
+
+	if _, err := a.db.GetConfig(userID); err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "No configuration", http.StatusNotFound)
+			return
+		}
+		level.Error(logger).Log("msg", "error getting config", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := a.db.DeactivateConfig(userID); err != nil {
+		level.Error(logger).Log("msg", "error deactivating configs", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (a *API) restoreConfig(w http.ResponseWriter, r *http.Request) {
+	userID, _, err := user.ExtractOrgIDFromHTTPRequest(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	logger := util.WithContext(r.Context(), util.Logger)
+	fmt.Printf("restore org ID %s\n", userID)
+
+	if _, err := a.db.GetConfig(userID); err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "No configuration", http.StatusNotFound)
+			return
+		}
+		level.Error(logger).Log("msg", "error getting config", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := a.db.RestoreConfig(userID); err != nil {
+		level.Error(logger).Log("msg", "error restoring config", "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 }
