@@ -239,3 +239,8 @@ func Test_GetConfigs_IncludesNewerConfigsAndExcludesOlder(t *testing.T) {
 		userID3: config3,
 	}, found)
 }
+
+// Test user w/ only alertmanager config doesn't show up in getallconfigs
+// Test posting invalid config
+// Test setting ruler config doesn't change alertmanager config
+// Test setting alertmanager config doesn't change ruler config
