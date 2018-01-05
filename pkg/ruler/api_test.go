@@ -14,6 +14,7 @@ import (
 
 	"github.com/weaveworks/common/user"
 	"github.com/weaveworks/cortex/pkg/configs"
+	"github.com/weaveworks/cortex/pkg/configs/api"
 	"github.com/weaveworks/cortex/pkg/configs/db"
 	"github.com/weaveworks/cortex/pkg/configs/db/dbtest"
 )
@@ -43,22 +44,22 @@ func cleanup(t *testing.T) {
 }
 
 // request makes a request to the configs API.
-func request(t *testing.T, method, urlStr string, body io.Reader) *httptest.ResponseRecorder {
+func request(t *testing.T, handler http.Handler, method, urlStr string, body io.Reader) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	r, err := http.NewRequest(method, urlStr, body)
 	require.NoError(t, err)
-	app.ServeHTTP(w, r)
+	handler.ServeHTTP(w, r)
 	return w
 }
 
 // requestAsUser makes a request to the configs API as the given user.
-func requestAsUser(t *testing.T, userID string, method, urlStr string, body io.Reader) *httptest.ResponseRecorder {
+func requestAsUser(t *testing.T, handler http.Handler, userID string, method, urlStr string, body io.Reader) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	r, err := http.NewRequest(method, urlStr, body)
 	require.NoError(t, err)
 	r = r.WithContext(user.InjectOrgID(r.Context(), userID))
 	user.InjectOrgIDIntoHTTPRequest(r.Context(), r)
-	app.ServeHTTP(w, r)
+	handler.ServeHTTP(w, r)
 	return w
 }
 
@@ -109,14 +110,14 @@ func post(t *testing.T, userID string, oldConfig configs.RulesConfig, newConfig 
 	b, err := json.Marshal(updateRequest)
 	require.NoError(t, err)
 	reader := bytes.NewReader(b)
-	w := requestAsUser(t, userID, "POST", endpoint, reader)
+	w := requestAsUser(t, app, userID, "POST", endpoint, reader)
 	require.Equal(t, http.StatusNoContent, w.Code)
 	return get(t, userID)
 }
 
 // get a config
 func get(t *testing.T, userID string) configs.VersionedRulesConfig {
-	w := requestAsUser(t, userID, "GET", endpoint, nil)
+	w := requestAsUser(t, app, userID, "GET", endpoint, nil)
 	return parseVersionedRulesConfig(t, w.Body.Bytes())
 }
 
@@ -126,7 +127,7 @@ func Test_GetConfig_NotFound(t *testing.T) {
 	defer cleanup(t)
 
 	userID := makeUserID()
-	w := requestAsUser(t, userID, "GET", endpoint, nil)
+	w := requestAsUser(t, app, userID, "GET", endpoint, nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -135,7 +136,7 @@ func Test_PostConfig_Anonymous(t *testing.T) {
 	setup(t)
 	defer cleanup(t)
 
-	w := request(t, "POST", endpoint, nil)
+	w := request(t, app, "POST", endpoint, nil)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
@@ -167,11 +168,11 @@ func Test_PostConfig_InvalidNewConfig(t *testing.T) {
 	require.NoError(t, err)
 	reader := bytes.NewReader(b)
 	{
-		w := requestAsUser(t, userID, "POST", endpoint, reader)
+		w := requestAsUser(t, app, userID, "POST", endpoint, reader)
 		require.Equal(t, http.StatusBadRequest, w.Code)
 	}
 	{
-		w := requestAsUser(t, userID, "GET", endpoint, nil)
+		w := requestAsUser(t, app, userID, "GET", endpoint, nil)
 		require.Equal(t, http.StatusNotFound, w.Code)
 	}
 }
@@ -209,7 +210,7 @@ func Test_PostConfig_InvalidChangedConfig(t *testing.T) {
 	require.NoError(t, err)
 	reader := bytes.NewReader(b)
 	{
-		w := requestAsUser(t, userID, "POST", endpoint, reader)
+		w := requestAsUser(t, app, userID, "POST", endpoint, reader)
 		require.Equal(t, http.StatusBadRequest, w.Code)
 	}
 	result := get(t, userID)
@@ -292,6 +293,67 @@ func Test_GetConfigs_IncludesNewerConfigsAndExcludesOlder(t *testing.T) {
 	}, found)
 }
 
-// Test user w/ only alertmanager config doesn't show up in getallconfigs
-// Test setting ruler config doesn't change alertmanager config
-// Test setting alertmanager config doesn't change ruler config
+// postAlertmanagerConfig posts an alertmanager config to the alertmanager configs API.
+func postAlertmanagerConfig(t *testing.T, userID, configFile string) {
+	config := configs.Config{
+		AlertmanagerConfig: configFile,
+		RulesFiles:         nil,
+	}
+	b, err := json.Marshal(config)
+	require.NoError(t, err)
+	reader := bytes.NewReader(b)
+	configsAPI := api.New(database)
+	w := requestAsUser(t, configsAPI, userID, "POST", "/api/prom/configs/alertmanager", reader)
+	require.Equal(t, http.StatusNoContent, w.Code)
+}
+
+// getAlertmanagerConfig posts an alertmanager config to the alertmanager configs API.
+func getAlertmanagerConfig(t *testing.T, userID string) string {
+	w := requestAsUser(t, api.New(database), userID, "GET", "/api/prom/configs/alertmanager", nil)
+	var x configs.View
+	b := w.Body.Bytes()
+	err := json.Unmarshal(b, &x)
+	require.NoError(t, err, "Could not unmarshal JSON: %v", string(b))
+	return x.Config.AlertmanagerConfig
+}
+
+// If a user has only got alertmanager config set, then we learn nothing about them via GetConfigs.
+func Test_AlertmanagerConfig_NotInAllConfigs(t *testing.T) {
+	setup(t)
+	defer cleanup(t)
+
+	config := makeString(`
+            # Config no. %d.
+            route:
+              receiver: noop
+
+            receivers:
+            - name: noop`)
+	postAlertmanagerConfig(t, makeUserID(), config)
+
+	found, err := privateAPI.GetConfigs(0)
+	assert.NoError(t, err, "error getting configs")
+	assert.Equal(t, map[string]configs.VersionedRulesConfig{}, found)
+}
+
+// Setting a ruler config doesn't change alertmanager config.
+func Test_AlertmanagerConfig_RulerConfigDoesntChangeIt(t *testing.T) {
+	setup(t)
+	defer cleanup(t)
+
+	userID := makeUserID()
+	alertmanagerConfig := makeString(`
+            # Config no. %d.
+            route:
+              receiver: noop
+
+            receivers:
+            - name: noop`)
+	postAlertmanagerConfig(t, userID, alertmanagerConfig)
+
+	rulerConfig := makeRulerConfig()
+	post(t, userID, nil, rulerConfig)
+
+	newAlertmanagerConfig := getAlertmanagerConfig(t, userID)
+	assert.Equal(t, alertmanagerConfig, newAlertmanagerConfig)
+}
